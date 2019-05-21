@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+
+def dataset(train_path, test_path):
+    train = pd.read_csv(train_path) # 载入训练集
+    test = pd.read_csv(test_path) # 载入测试集
+    data = train.append(test,sort=False) # 合并训练集和测试集，不排序
+    return data,test
+
+# 下面可视化数据
+#（画出超过1000个空值的特征）
+def plot_nullover1000_feature(data):
+    features = []
+    nullValues = []
+    for i in data:
+        if (data.isna().sum()[i])>1000 and i!='SalePrice':
+            features.append(i)
+            nullValues.append(data.isna().sum()[i])
+    y_pos = np.arange(len(features))
+    plt.bar(y_pos, nullValues, align='center', alpha=0.5)
+    plt.xticks(y_pos, features)
+    plt.ylabel('NULL Values')
+    plt.xlabel('Features')
+    plt.title('Features with more than 1000 NULL values')
+    plt.show()
+
+
+#缺失值的处理
+def feature_null_deal(datas):
+    data = datas.dropna(axis=1, how='any', thresh = 1000) # 舍弃那些超过1000个缺失值的列
+    data = data.fillna(data.mean()) # 用平均值代替缺失值
+
+
+# 处理字符型数值，变为整数数值
+    data = pd.get_dummies(data) # 将字符串值转换为整数值
+
+# 舍弃相关性强的特征
+    covarianceMatrix = data.corr()
+    listOfFeatures = [i for i in covarianceMatrix]
+    setOfDroppedFeatures = set()
+    for i in range(len(listOfFeatures)) :
+        for j in range(i+1,len(listOfFeatures)): #Avoid repetitions 避免重复，因为相关系数矩阵是对称的
+            feature1 = listOfFeatures[i]
+            feature2 = listOfFeatures[j]
+            if abs(covarianceMatrix[feature1][feature2]) > 0.8:  #  若特征间的相关性超过0.8
+                    setOfDroppedFeatures.add(feature1) # 将其中的一个添加到集合中
+# 尝试了好多阈值，0.8是较优的选择
+    data = data.drop(setOfDroppedFeatures, axis=1)
+# 删除与输出不相关的特征
+
+    nonCorrelatedWithOutput = [column for column in data if abs(data[column].corr(data["SalePrice"])) < 0.045]
+# 尝试了许多值，0.045是最优的
+    data = data.drop(nonCorrelatedWithOutput, axis=1)
+    return data
+
+
+# 以其中一个特征为例，画出该特征下点的分布，包括异常值
+def plot_onefeature(feature1, feature2):
+    plt.plot(data[feature1], data[feature2], 'bo')
+    plt.axvline(x=75000, color='r')
+    plt.ylabel('SalePrice')
+    plt.xlabel('LotArea')
+    plt.title('SalePrice in function of LotArea')
+    plt.show()
+
+
+
+
+#其次，我们将使用percentile（）方法定义一个返回异常值的函数 （参考箱线图）
+
+def outliers_iqr(ys):
+    quartile_1, quartile_3 = np.percentile(ys, [25, 75])  # 四分之一和四分之三分位数 (25% -> 75% 的数据会接受)
+    iqr = quartile_3 - quartile_1
+    lower_bound = quartile_1 - (iqr * 1.5)  # Get lower bound
+    upper_bound = quartile_3 + (iqr * 1.5)  # Get upper bound
+    return np.where((ys > upper_bound) | (ys < lower_bound))  # 返回的是异常值
+
+if __name__ == "__main__":# 首先，我们需要分离数据（因为移除异常值等价于移除一行数据，但我们不想从测试集中移除数据行）
+    data,test = dataset("./train.csv", "./test.csv")
+    plot_nullover1000_feature(data)
+    data = feature_null_deal(data)
+    plot_onefeature('LotArea' , 'SalePrice')
+    newTrain = data.iloc[:1460]
+    newTest = data.iloc[1460:]
+
+# 从训练集中删除异常值
+
+    trainWithoutOutliers = newTrain  # 这里不能直接在训练集上改动，因为下面需要迭代
+
+    for column in newTrain:
+        outlierValuesList = np.ndarray.tolist(outliers_iqr(newTrain[column])[0])  # outliers_iqr() returns an array
+        trainWithoutOutliers = newTrain.drop(outlierValuesList)  # Drop outlier rows
+
+    trainWithoutOutliers = newTrain
+
+
+
+    X = trainWithoutOutliers.drop("SalePrice", axis=1) # 移除 SalePrice 这一整列
+    Y = np.log1p(trainWithoutOutliers["SalePrice"]) #得到 SalePrice 这一列 {log1p(x) = log(x+1)}
+    reg = LinearRegression().fit(X, Y)
+
+# 测试集上做预测
+
+    newTest = newTest.drop("SalePrice", axis=1) #移除 SalePrice 这一列
+    pred = np.expm1(reg.predict(newTest))
+
+# 提交预测
+
+    sub = pd.DataFrame() # 创建一个数据集，即为我们的最后结果
+    sub['Id'] = test['Id']
+    sub['SalePrice'] = pred
+    sub.to_csv("submission.csv", index=False) #将数据集转换为csv文件，在相关目录下查看文件即可
